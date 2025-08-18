@@ -1,4 +1,4 @@
-// services/comexstatServiceFixed.ts - API Service Corrigido para Rate Limiting e Endpoints
+// services/comexstatServiceFixed.ts - ZERO MOCK DATA - APENAS DADOS REAIS
 const API_BASE = 'https://api-comexstat.mdic.gov.br';
 
 interface ComexstatRequest {
@@ -152,109 +152,110 @@ class ComexStatServiceFixed {
     }
   }
 
-  // ✅ NCM RANKING COM ENDPOINTS CORRETOS
+  // ✅ NCM RANKING - APENAS DADOS REAIS
   async getNCMRanking(
     flow: 'export' | 'import',
     period: { from: string; to: string },
     limit: number = 20
   ): Promise<any[]> {
-    console.log('📊 === BUSCANDO RANKING NCM (CORRIGIDO) ===');
+    console.log('📊 === BUSCANDO RANKING NCM (DADOS REAIS APENAS) ===');
     
     try {
-      // Primeiro tentar sem details (agregado geral)
       const request: ComexstatRequest = {
         flow,
         monthDetail: false,
         period,
-        metrics: ['metricFOB', 'metricKG']
-        // ❌ SEM DETAILS - API pode não suportar NCM details
+        details: ['ncm'], // ✅ CRITICAL: NCM detalhamento
+        metrics: ['metricFOB', 'metricKG', 'metricStatistic']
       };
 
       const response = await this.getGeneralData(request);
       
-      if (!response.data || !response.data.list) {
-        console.log('⚠️ Resposta da API sem dados de lista');
-        return [];
+      if (!response.data || !response.data.list || response.data.list.length === 0) {
+        console.log('⚠️ API retornou lista vazia para NCM');
+        return []; // ❌ SEM MOCK DATA
       }
 
-      // Processar dados agregados
       const processedData = this.processNCMData(response.data.list);
       return processedData.slice(0, limit);
 
     } catch (error: any) {
       console.error('❌ Erro ao buscar NCM ranking:', error);
-      return [];
+      return []; // ❌ SEM MOCK DATA
     }
   }
 
-  // ✅ EMPRESAS COM FALLBACK STRATEGY
+  // ✅ EMPRESA RANKING - APENAS DADOS REAIS (SE DISPONÍVEIS)
   async getEmpresaRanking(
     flow: 'export' | 'import',
     period: { from: string; to: string },
     limit: number = 20
   ): Promise<any[]> {
-    console.log('🏢 === BUSCANDO RANKING EMPRESAS (STRATEGY CORRIGIDA) ===');
+    console.log('🏢 === BUSCANDO RANKING EMPRESAS (DADOS REAIS APENAS) ===');
     
-    // Strategy 1: Tentar dados agregados sem details
     try {
+      // Tentar dados por estado (disponível na API)
       const request: ComexstatRequest = {
         flow,
         monthDetail: false,
         period,
+        details: ['state'], // ✅ Estados disponíveis
         metrics: ['metricFOB', 'metricKG']
-        // ❌ SEM DETAILS empresariais - pode requerer permissões especiais
       };
 
       const response = await this.getGeneralData(request);
       
       if (response.data && response.data.list && response.data.list.length > 0) {
-        console.log('✅ Dados agregados obtidos, processando...');
-        const processedData = this.processEmpresaData(response.data.list);
+        console.log('✅ Dados por estado obtidos');
+        const processedData = this.processEstadualData(response.data.list);
         return processedData.slice(0, limit);
       }
       
+      console.log('⚠️ Dados empresariais não disponíveis');
+      return []; // ❌ SEM MOCK DATA
+      
     } catch (error: any) {
-      console.warn('⚠️ Strategy 1 falhou:', error.message);
+      console.error('❌ Erro ao buscar dados empresariais:', error);
+      return []; // ❌ SEM MOCK DATA
     }
-
-    // Strategy 2: Dados simulados baseados em dados reais (fallback)
-    console.log('📋 Usando dados de exemplo para empresas...');
-    return this.getEmpresaFallbackData(flow, limit);
   }
 
   // ✅ PROCESSAMENTO DE DADOS NCM
   private processNCMData(rawData: any[]): any[] {
     console.log('🔄 Processando dados NCM:', rawData.length);
     
-    const ncmMap = new Map<string, { fob: number; kg: number; descricao: string }>();
+    const ncmMap = new Map<string, { fob: number; kg: number; qtEstat: number; descricao: string }>();
     let totalFOB = 0;
 
-    rawData.forEach((item, index) => {
-      const fob = parseFloat(item.metricFOB || item.vlFob || 0);
-      const kg = parseFloat(item.metricKG || item.kgLiq || 0);
+    rawData.forEach(item => {
+      const fob = this.parseValue(item.metricFOB || item.vlFob);
+      const kg = this.parseValue(item.metricKG || item.kgLiq);
+      const qtEstat = this.parseValue(item.metricStatistic || item.qtEstat);
       
-      // Buscar código NCM em diferentes campos
-      const ncm = item.coNcm || item.ncm || item.codigo || `NCM${index + 1}`;
-      const descricao = item.noNcm || item.descricao || `Produto ${ncm}`;
+      const ncm = item.coNcm || item.ncm || item.codigo;
+      const descricao = item.noNcm || item.descricao || item.description;
       
-      if (fob > 0) {
-        const existing = ncmMap.get(ncm) || { fob: 0, kg: 0, descricao };
-        ncmMap.set(ncm, {
-          fob: existing.fob + fob,
-          kg: existing.kg + kg,
-          descricao
-        });
-        totalFOB += fob;
-      }
+      if (!ncm || fob <= 0) return;
+
+      const existing = ncmMap.get(ncm) || { fob: 0, kg: 0, qtEstat: 0, descricao: descricao || `Produto ${ncm}` };
+      
+      ncmMap.set(ncm, {
+        fob: existing.fob + fob,
+        kg: existing.kg + kg,
+        qtEstat: existing.qtEstat + qtEstat,
+        descricao: existing.descricao
+      });
+
+      totalFOB += fob;
     });
 
-    // Converter para array e calcular percentuais
     const result = Array.from(ncmMap.entries())
       .map(([ncm, data]) => ({
         ncm,
         descricao: data.descricao,
         fob: data.fob,
         kg: data.kg,
+        qtEstat: data.qtEstat,
         participacao: totalFOB > 0 ? (data.fob / totalFOB) * 100 : 0
       }))
       .sort((a, b) => b.fob - a.fob);
@@ -263,83 +264,99 @@ class ComexStatServiceFixed {
     return result;
   }
 
-  // ✅ PROCESSAMENTO DE DADOS EMPRESA
-  private processEmpresaData(rawData: any[]): any[] {
-    console.log('🔄 Processando dados de empresas:', rawData.length);
+  // ✅ PROCESSAMENTO DE DADOS ESTADUAIS
+  private processEstadualData(rawData: any[]): any[] {
+    console.log('🔄 Processando dados estaduais:', rawData.length);
     
-    // Como os dados empresariais podem não estar disponíveis,
-    // vamos tentar extrair informações dos dados agregados
-    const empresaMap = new Map<string, { fob: number; kg: number; razaoSocial: string }>();
+    const estadoMap = new Map<string, { fob: number; kg: number; nome: string }>();
     let totalFOB = 0;
 
-    rawData.forEach((item, index) => {
-      const fob = parseFloat(item.metricFOB || item.vlFob || 0);
-      const kg = parseFloat(item.metricKG || item.kgLiq || 0);
+    rawData.forEach(item => {
+      const fob = this.parseValue(item.metricFOB || item.vlFob);
+      const kg = this.parseValue(item.metricKG || item.kgLiq);
       
-      // Se não há dados empresariais, usar dados agregados por região/estado
-      const empresa = item.noEmpresa || item.empresa || item.uf || item.regiao || `Empresa${index + 1}`;
-      const razaoSocial = item.razaoSocial || empresa;
+      const codigo = item.coUf || item.state || item.uf;
+      const nome = item.noUf || item.estado || this.getEstadoNome(codigo);
       
-      if (fob > 0) {
-        const existing = empresaMap.get(empresa) || { fob: 0, kg: 0, razaoSocial };
-        empresaMap.set(empresa, {
-          fob: existing.fob + fob,
-          kg: existing.kg + kg,
-          razaoSocial
-        });
-        totalFOB += fob;
-      }
+      if (!codigo || fob <= 0) return;
+
+      const existing = estadoMap.get(codigo) || { fob: 0, kg: 0, nome: nome || `Estado ${codigo}` };
+      
+      estadoMap.set(codigo, {
+        fob: existing.fob + fob,
+        kg: existing.kg + kg,
+        nome: existing.nome
+      });
+
+      totalFOB += fob;
     });
 
-    const result = Array.from(empresaMap.entries())
-      .map(([empresa, data]) => ({
-        cnpj: empresa,
-        razaoSocial: data.razaoSocial,
+    const result = Array.from(estadoMap.entries())
+      .map(([codigo, data]) => ({
+        cnpj: codigo,
+        razaoSocial: `Estado: ${data.nome}`,
         fob: data.fob,
         kg: data.kg,
-        participacao: totalFOB > 0 ? (data.fob / totalFOB) * 100 : 0
+        participacao: totalFOB > 0 ? (data.fob / totalFOB) * 100 : 0,
+        tipo: 'ESTADO',
+        observacao: 'Dados reais agregados por estado - fonte MDIC'
       }))
       .sort((a, b) => b.fob - a.fob);
 
+    console.log(`✅ Processados ${result.length} estados`);
     return result;
   }
 
-  // ✅ FALLBACK DATA PARA EMPRESAS
-  private getEmpresaFallbackData(flow: 'export' | 'import', limit: number): any[] {
-    console.log('📊 Gerando dados de exemplo para empresas...');
+  // ✅ MÉTODO PARA DADOS MENSAIS
+  async getMonthlyData(
+    flow: 'export' | 'import',
+    year: number,
+    months?: number[]
+  ): Promise<any> {
+    const targetMonths = months || Array.from({ length: 12 }, (_, i) => i + 1);
     
-    const empresasExemplo = [
-      { razao: 'Vale S.A.', setor: 'Mineração', base: 15000000000 },
-      { razao: 'Petrobras', setor: 'Petróleo', base: 12000000000 },
-      { razao: 'JBS S.A.', setor: 'Alimentos', base: 8000000000 },
-      { razao: 'Suzano', setor: 'Papel/Celulose', base: 6000000000 },
-      { razao: 'Embraer', setor: 'Aeronáutica', base: 5000000000 },
-      { razao: 'WEG', setor: 'Equipamentos', base: 3000000000 },
-      { razao: 'Marfrig', setor: 'Alimentos', base: 2500000000 },
-      { razao: 'Klabin', setor: 'Papel', base: 2000000000 },
-      { razao: 'Gerdau', setor: 'Siderurgia', base: 1800000000 },
-      { razao: 'BRF S.A.', setor: 'Alimentos', base: 1500000000 }
-    ];
+    const monthlyPromises = targetMonths.map(async (month) => {
+      const monthStr = month.toString().padStart(2, '0');
+      const period = {
+        from: `${year}-${monthStr}`,
+        to: `${year}-${monthStr}`
+      };
+      
+      try {
+        const response = await this.getGeneralData({
+          flow,
+          monthDetail: true,
+          period,
+          metrics: ['metricFOB', 'metricKG']
+        });
+        
+        return {
+          month,
+          period: `${year}-${monthStr}`,
+          data: response.data?.list || [],
+          success: true
+        };
+      } catch (error: any) {
+        console.warn(`⚠️ Erro no mês ${month}/${year}:`, error);
+        return {
+          month,
+          period: `${year}-${monthStr}`,
+          data: [],
+          success: false,
+          error: error.message
+        };
+      }
+    });
 
-    const totalBase = empresasExemplo.reduce((sum, emp) => sum + emp.base, 0);
-    
-    return empresasExemplo.slice(0, limit).map((empresa, index) => ({
-      cnpj: `${(11111111000100 + index).toString()}`,
-      razaoSocial: empresa.razao,
-      fob: empresa.base * (flow === 'export' ? 1 : 0.7), // Ajuste export/import
-      kg: empresa.base / 1000, // Conversão aproximada
-      participacao: (empresa.base / totalBase) * 100,
-      setor: empresa.setor,
-      isExample: true // Flag para indicar dados de exemplo
-    }));
+    const results = await Promise.all(monthlyPromises);
+    return results;
   }
 
   // ✅ HEALTH CHECK SIMPLIFICADO
   async healthCheck(): Promise<{ status: boolean; message: string; data?: any }> {
     try {
-      // Teste simples sem details que pode dar erro
       const testPayload = {
-        flow: 'export',
+        flow: 'export' as const,
         monthDetail: false,
         period: { from: '2023-01', to: '2023-03' },
         metrics: ['metricFOB', 'metricKG']
@@ -377,49 +394,28 @@ class ComexStatServiceFixed {
     }
   }
 
-  // ✅ MÉTODO PARA DADOS MENSAIS
-  async getMonthlyData(
-    flow: 'export' | 'import',
-    year: number,
-    months?: number[] // Se não especificado, busca todos os meses
-  ): Promise<any> {
-    const targetMonths = months || Array.from({ length: 12 }, (_, i) => i + 1);
-    
-    const monthlyPromises = targetMonths.map(async (month) => {
-      const monthStr = month.toString().padStart(2, '0');
-      const period = {
-        from: `${year}-${monthStr}`,
-        to: `${year}-${monthStr}`
-      };
-      
-      try {
-        const response = await this.getGeneralData({
-          flow,
-          monthDetail: true,
-          period,
-          metrics: ['metricFOB', 'metricKG']
-        });
-        
-        return {
-          month,
-          period: `${year}-${monthStr}`,
-          data: response.data?.list || [],
-          success: true
-        };
-      } catch (error) {
-        console.warn(`⚠️ Erro no mês ${month}/${year}:`, error);
-        return {
-          month,
-          period: `${year}-${monthStr}`,
-          data: [],
-          success: false,
-          error: error.message
-        };
-      }
-    });
+  // ✅ HELPERS
+  private parseValue(value: any): number {
+    if (typeof value === 'number') return value;
+    if (typeof value === 'string') {
+      const parsed = parseFloat(value.replace(/[^\d.-]/g, ''));
+      return isNaN(parsed) ? 0 : parsed;
+    }
+    return 0;
+  }
 
-    const results = await Promise.all(monthlyPromises);
-    return results;
+  private getEstadoNome(codigo: any): string {
+    const estados: Record<string, string> = {
+      '11': 'Rondônia', '12': 'Acre', '13': 'Amazonas', '14': 'Roraima',
+      '15': 'Pará', '16': 'Amapá', '17': 'Tocantins', '21': 'Maranhão',
+      '22': 'Piauí', '23': 'Ceará', '24': 'Rio Grande do Norte', '25': 'Paraíba',
+      '26': 'Pernambuco', '27': 'Alagoas', '28': 'Sergipe', '29': 'Bahia',
+      '31': 'Minas Gerais', '32': 'Espírito Santo', '33': 'Rio de Janeiro',
+      '35': 'São Paulo', '41': 'Paraná', '42': 'Santa Catarina',
+      '43': 'Rio Grande do Sul', '50': 'Mato Grosso do Sul', '51': 'Mato Grosso',
+      '52': 'Goiás', '53': 'Distrito Federal'
+    };
+    return estados[String(codigo)] || `Estado ${codigo}`;
   }
 }
 

@@ -1,11 +1,11 @@
-// components/DashboardExpandidoUpdated.tsx - Dashboard Expandido com Componentes Corrigidos
+// components/DashboardExpandidoUpdated.tsx - ATUALIZAÇÃO para usar RankingRealOnly
 'use client';
 
 import React, { useState } from 'react';
 import { BarChart3, Package, Building, Database, TrendingUp, Calendar, AlertTriangle } from 'lucide-react';
 import DashboardWithMonthlyFilters from './DashboardWithMonthlyFilters';
-import NCMRankingFixed from './NCMRankingFixed';
-import CompanyRankingFixed from './CompanyRankingFixed';
+import RankingRealOnly from './RankingRealOnly'; // ✅ COMPONENTE EMPRESAS
+import NCMRankingFixedVisual from './NCMRankingFixedVisual'; // ✅ COMPONENTE NCM CORRIGIDO
 import APIExplorer from './APIExplorer';
 
 type TabType = 'overview' | 'ncm' | 'companies' | 'explorer';
@@ -32,9 +32,9 @@ export const DashboardExpandidoUpdated: React.FC = () => {
     },
     {
       id: 'companies' as TabType,
-      name: 'Empresas',
+      name: 'Estados/Regiões',
       icon: Building,
-      description: 'Ranking das empresas por volume'
+      description: 'Ranking por estado'
     },
     {
       id: 'explorer' as TabType,
@@ -52,160 +52,64 @@ export const DashboardExpandidoUpdated: React.FC = () => {
       case 'ncm':
         return (
           <div className="space-y-6">
-            {/* Header NCM */}
-            <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex items-center justify-between">
-                <div>
-                  <h2 className="text-2xl font-bold text-gray-900">Análise por NCM</h2>
-                  <p className="text-gray-600">Nomenclatura Comum do Mercosul - Classificação de produtos</p>
-                </div>
-                
-                <div className="flex items-center space-x-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tipo de Operação
-                    </label>
-                    <select
-                      value={filters.flow}
-                      onChange={(e) => setFilters(prev => ({ 
-                        ...prev, 
-                        flow: e.target.value as 'export' | 'import' 
-                      }))}
-                      className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-                    >
-                      <option value="export">Exportação</option>
-                      <option value="import">Importação</option>
-                    </select>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Período
-                    </label>
-                    <select
-                      value={`${filters.period.from}-${filters.period.to}`}
-                      onChange={(e) => {
-                        const [from, to] = e.target.value.split('-');
-                        setFilters(prev => ({ 
-                          ...prev, 
-                          period: { from: `${from}-01`, to: `${to}-12` }
-                        }));
-                      }}
-                      className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-                    >
-                      <option value="2024-2024">2024</option>
-                      <option value="2023-2023">2023</option>
-                      <option value="2022-2022">2022</option>
-                      <option value="2021-2021">2021</option>
-                      <option value="2020-2020">2020</option>
-                    </select>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            <NCMRankingFixed flow={filters.flow} period={filters.period} />
+            {/* ✅ COMPONENTE NCM TOTALMENTE CORRIGIDO */}
+            <NCMRankingFixedVisual />
           </div>
         );
       
       case 'companies':
         return (
           <div className="space-y-6">
-            {/* Header Empresas */}
+            {/* Header Estados */}
             <div className="bg-white rounded-lg shadow-sm p-6">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between mb-4">
                 <div>
-                  <h2 className="text-2xl font-bold text-gray-900">Análise por Empresas</h2>
-                  <p className="text-gray-600">Ranking das empresas por volume de operações</p>
+                  <h2 className="text-2xl font-bold text-gray-900">Ranking por Estados</h2>
+                  <p className="text-gray-600">Dados agregados por UF</p>
                 </div>
                 
                 <div className="flex items-center space-x-4">
+                  <select
+                    value={filters.flow}
+                    onChange={(e) => setFilters(prev => ({ ...prev, flow: e.target.value as 'export' | 'import' }))}
+                    className="border border-gray-300 rounded-lg px-3 py-2"
+                  >
+                    <option value="export">Exportação</option>
+                    <option value="import">Importação</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex items-center">
+                  <AlertTriangle className="h-5 w-5 text-yellow-600 mr-3" />
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Tipo de Operação
-                    </label>
-                    <select
-                      value={filters.flow}
-                      onChange={(e) => setFilters(prev => ({ 
-                        ...prev, 
-                        flow: e.target.value as 'export' | 'import' 
-                      }))}
-                      className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-                    >
-                      <option value="export">Exportação</option>
-                      <option value="import">Importação</option>
-                    </select>
-                  </div>
-                  
-                  <div>
-                    <label className="block text-sm font-medium text-gray-700 mb-1">
-                      Período
-                    </label>
-                    <select
-                      value={`${filters.period.from}-${filters.period.to}`}
-                      onChange={(e) => {
-                        const [from, to] = e.target.value.split('-');
-                        setFilters(prev => ({ 
-                          ...prev, 
-                          period: { from: `${from}-01`, to: `${to}-12` }
-                        }));
-                      }}
-                      className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-                    >
-                      <option value="2024-2024">2024</option>
-                      <option value="2023-2023">2023</option>
-                      <option value="2022-2022">2022</option>
-                      <option value="2021-2021">2021</option>
-                      <option value="2020-2020">2020</option>
-                    </select>
+                    <p className="text-sm font-medium text-yellow-800">⚠️ Dados Empresariais</p>
+                    <p className="text-xs text-yellow-700">
+                      API pública não fornece dados por CNPJ. Disponível: agregação por estado.
+                    </p>
                   </div>
                 </div>
               </div>
             </div>
 
-            {/* Aviso sobre limitações da API */}
-            <div className="bg-amber-50 border border-amber-200 rounded-lg p-4">
-              <div className="flex items-start">
-                <AlertTriangle className="h-5 w-5 text-amber-600 mr-2 mt-0.5" />
-                <div>
-                  <p className="text-amber-800 font-medium">Limitações dos Dados Empresariais</p>
-                  <p className="text-amber-700 text-sm mt-1">
-                    A API ComexStat pode ter restrições para dados empresariais devido a questões de privacidade.
-                    Quando os dados reais não estão disponíveis, exibimos exemplos baseados em estatísticas oficiais.
-                  </p>
-                </div>
-              </div>
-            </div>
-
-            <CompanyRankingFixed flow={filters.flow} period={filters.period} />
+            {/* ✅ COMPONENTE EMPRESAS/ESTADOS */}
+            <RankingRealOnly 
+              flow={filters.flow} 
+              period={filters.period}
+              viewType="empresa"
+            />
           </div>
         );
       
       case 'explorer':
         return (
           <div className="space-y-6">
-            {/* Header Explorer */}
             <div className="bg-white rounded-lg shadow-sm p-6">
-              <div>
-                <h2 className="text-2xl font-bold text-gray-900">Explorador da API ComexStat</h2>
-                <p className="text-gray-600">
-                  Ferramenta para descobrir quais dados estão disponíveis na API oficial
-                </p>
-              </div>
-            </div>
-
-            {/* Aviso sobre Rate Limiting */}
-            <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
-              <div className="flex items-start">
-                <TrendingUp className="h-5 w-5 text-blue-600 mr-2 mt-0.5" />
-                <div>
-                  <p className="text-blue-800 font-medium">Rate Limiting Implementado</p>
-                  <p className="text-blue-700 text-sm mt-1">
-                    O sistema agora implementa rate limiting inteligente (3-15s entre requests) para evitar 
-                    erros 429. A exploração será mais lenta mas mais estável.
-                  </p>
-                </div>
-              </div>
+              <h2 className="text-2xl font-bold text-gray-900">Explorador da API ComexStat</h2>
+              <p className="text-gray-600 mb-4">
+                Descobrir quais dados estão disponíveis na API oficial
+              </p>
             </div>
 
             <APIExplorer />
@@ -289,14 +193,14 @@ export const DashboardExpandidoUpdated: React.FC = () => {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
           <div className="flex items-center justify-between">
             <div className="text-sm text-gray-500">
-              <p>✅ Sistema corrigido com rate limiting inteligente e filtros mensais</p>
+              <p>✅ Sistema atualizado: ZERO mock data - apenas dados reais API ComexStat MDIC</p>
               <p className="mt-1">
-                🔧 Problemas resolvidos: Rate limit 429, Endpoints 400, Gráfico NCM, Dados empresa, Filtros mensais
+                🔧 NCM: 100% real | Empresas: Estados reais (CNPJ não disponível na API pública)
               </p>
             </div>
             
             <div className="flex items-center space-x-4 text-xs text-gray-400">
-              <span>ComexStat Analytics v2.1</span>
+              <span>ComexStat Analytics v3.1</span>
               <span>•</span>
               <span>Duri Trading</span>
               <span>•</span>

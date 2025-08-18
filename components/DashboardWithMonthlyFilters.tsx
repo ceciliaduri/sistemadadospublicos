@@ -1,25 +1,19 @@
-// components/DashboardWithMonthlyFilters.tsx - Dashboard com Filtros Mensais
+// components/DashboardWithMonthlyFilters.tsx - ATUALIZAÇÃO CRÍTICA: Removendo todo mock data
 'use client';
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
-import { LineChart, Line, BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer } from 'recharts';
-import { TrendingUp, TrendingDown, DollarSign, Package, Calendar, RefreshCw, CheckCircle, AlertCircle, Clock, Filter } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, BarChart, Bar } from 'recharts';
+import { TrendingUp, Calendar, DollarSign, Package, AlertTriangle, CheckCircle, RefreshCw } from 'lucide-react';
 import { comexstatServiceFixed } from '../services/comexstatServiceFixed';
 
 interface ComexData {
   period: string;
   fob: number;
   kg: number;
+  isReal: boolean; // Flag para identificar dados reais
 }
 
-interface Metrics {
-  totalFOB: number;
-  totalKG: number;
-  growth: number;
-  recordCount: number;
-}
-
-interface FilterState {
+interface DashboardFilters {
   flow: 'export' | 'import';
   viewType: 'annual' | 'monthly';
   year: number;
@@ -27,44 +21,26 @@ interface FilterState {
   period: { from: string; to: string };
 }
 
-const MONTHS = [
-  { value: 1, label: 'Janeiro' },
-  { value: 2, label: 'Fevereiro' },
-  { value: 3, label: 'Março' },
-  { value: 4, label: 'Abril' },
-  { value: 5, label: 'Maio' },
-  { value: 6, label: 'Junho' },
-  { value: 7, label: 'Julho' },
-  { value: 8, label: 'Agosto' },
-  { value: 9, label: 'Setembro' },
-  { value: 10, label: 'Outubro' },
-  { value: 11, label: 'Novembro' },
-  { value: 12, label: 'Dezembro' }
-];
-
-const DashboardWithMonthlyFilters = () => {
-  const [data, setData] = useState<ComexData[]>([]);
-  const [metrics, setMetrics] = useState<Metrics>({
-    totalFOB: 0,
-    totalKG: 0,
-    growth: 0,
-    recordCount: 0
-  });
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string>('');
-  const [connected, setConnected] = useState(false);
-  const [filters, setFilters] = useState<FilterState>({
+export const DashboardWithMonthlyFilters: React.FC = () => {
+  // ✅ ESTADOS
+  const [filters, setFilters] = useState<DashboardFilters>({
     flow: 'export',
     viewType: 'annual',
-    year: 2022,
+    year: 2023,
     months: [],
-    period: { from: '2022-01', to: '2022-12' }
+    period: { from: '2023-01', to: '2023-12' }
   });
 
-  // Cache em memória
-  const cacheRef = useRef<Map<string, { data: any; timestamp: number }>>(new Map());
-  const lastRequestRef = useRef<number>(0);
-  const CACHE_DURATION = 10 * 60 * 1000; // 10 minutos
+  const [data, setData] = useState<ComexData[]>([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
+  const [connected, setConnected] = useState(false);
+  const [metrics, setMetrics] = useState({
+    totalFOB: 0,
+    totalKG: 0,
+    avgMonthly: 0,
+    growth: 0
+  });
 
   // ✅ ATUALIZAR PERÍODO BASEADO NOS FILTROS
   const updatePeriodFromFilters = useCallback(() => {
@@ -96,9 +72,9 @@ const DashboardWithMonthlyFilters = () => {
     }
   }, [filters.viewType, filters.year, filters.months]);
 
-  // ✅ PROCESSAMENTO DE DADOS COM SUPORTE MENSAL
+  // ✅ PROCESSAMENTO DE DADOS COM SUPORTE MENSAL - SEM MOCK
   const processOfficialData = (rawData: any): ComexData[] => {
-    console.log('🔄 === PROCESSAMENTO DADOS COM FILTRO MENSAL ===');
+    console.log('🔄 === PROCESSAMENTO DADOS REAIS (SEM MOCK) ===');
     console.log('Tipo de view:', filters.viewType);
     console.log('Meses selecionados:', filters.months);
     
@@ -125,77 +101,60 @@ const DashboardWithMonthlyFilters = () => {
       return [];
     }
 
-    console.log(`📊 Processando ${dataArray.length} registros`);
+    console.log(`📊 Processando ${dataArray.length} registros REAIS`);
 
-    // Processar cada item
-    const processedData: ComexData[] = [];
-    
-    dataArray.forEach((item, index) => {
-      // Extrair período
-      let period = '';
-      
-      if (item.coAno && item.coMes) {
-        period = `${item.coAno}-${String(item.coMes).padStart(2, '0')}`;
-      } else if (item.dtAno && item.dtMes) {
-        period = `${item.dtAno}-${String(item.dtMes).padStart(2, '0')}`;
-      } else if (item.anoMes) {
-        const str = item.anoMes.toString();
-        if (str.length === 6) {
-          period = `${str.substring(0, 4)}-${str.substring(4, 6)}`;
-        }
-      } else {
-        period = `${filters.year}-${String(index + 1).padStart(2, '0')}`;
-      }
+    // Processar dados agrupando por período
+    const periodMap = new Map<string, { fob: number; kg: number }>();
 
-      // Extrair valores
+    dataArray.forEach(item => {
       const fob = parseFloat(item.metricFOB || item.vlFob || 0);
       const kg = parseFloat(item.metricKG || item.kgLiq || 0);
-
-      // Filtrar por meses se especificado
-      if (filters.viewType === 'monthly' && filters.months.length > 0) {
-        const monthNumber = parseInt(period.split('-')[1]);
-        if (!filters.months.includes(monthNumber)) {
-          return; // Pular este registro
-        }
+      
+      // Tentar extrair período do item
+      let period = item.period || item.ano || item.month;
+      
+      if (!period && item.coAno && item.coMes) {
+        period = `${item.coAno}-${item.coMes.toString().padStart(2, '0')}`;
+      }
+      
+      if (!period) {
+        // Se não há período específico, usar o período do filtro
+        period = filters.viewType === 'monthly' ? 
+          filters.period.from : 
+          filters.year.toString();
       }
 
       if (fob > 0 || kg > 0) {
-        processedData.push({ period, fob, kg });
+        const existing = periodMap.get(period) || { fob: 0, kg: 0 };
+        periodMap.set(period, {
+          fob: existing.fob + fob,
+          kg: existing.kg + kg
+        });
       }
     });
 
-    // Agrupar por período se necessário
-    const groupedData = new Map<string, { fob: number; kg: number }>();
-    
-    processedData.forEach(item => {
-      const existing = groupedData.get(item.period) || { fob: 0, kg: 0 };
-      groupedData.set(item.period, {
-        fob: existing.fob + item.fob,
-        kg: existing.kg + item.kg
-      });
-    });
-
-    // Converter para array final
-    const result = Array.from(groupedData.entries())
-      .map(([period, values]) => ({
+    // Converter para array ordenado
+    const result = Array.from(periodMap.entries())
+      .map(([period, data]) => ({
         period,
-        fob: values.fob,
-        kg: values.kg
+        fob: data.fob,
+        kg: data.kg,
+        isReal: true // ✅ Flag indicando dados reais
       }))
       .sort((a, b) => a.period.localeCompare(b.period));
 
-    console.log(`✅ Resultado final: ${result.length} períodos processados`);
+    console.log(`✅ Processados ${result.length} períodos com dados REAIS`);
     return result;
   };
 
-  // ✅ BUSCAR DADOS COM SUPORTE MENSAL
-  const fetchData = useCallback(async () => {
+  // ✅ CARREGAR DADOS - SEM FALLBACK MOCK
+  const loadData = useCallback(async () => {
     setLoading(true);
     setError('');
     setConnected(false);
 
     try {
-      console.log('📡 Buscando dados com filtros:', filters);
+      console.log('📡 Buscando dados REAIS com filtros:', filters);
       
       let response;
       
@@ -226,6 +185,11 @@ const DashboardWithMonthlyFilters = () => {
       
       if (response && response.data) {
         const processedData = processOfficialData(response.data);
+        
+        if (processedData.length === 0) {
+          throw new Error('API retornou dados vazios para o período selecionado');
+        }
+        
         const calculatedMetrics = calculateMetrics(processedData);
         
         setData(processedData);
@@ -233,397 +197,335 @@ const DashboardWithMonthlyFilters = () => {
         setConnected(true);
         setError('');
         
-        console.log(`✅ Dados carregados: ${processedData.length} períodos`);
+        console.log(`✅ Dados REAIS carregados: ${processedData.length} períodos`);
       } else {
         throw new Error('Resposta da API sem dados válidos');
       }
       
     } catch (error: any) {
-      console.error('❌ Erro ao buscar dados:', error);
-      setError(error.message);
+      console.error('❌ Erro ao buscar dados REAIS:', error);
+      setError(`Erro ao carregar dados reais: ${error.message}`);
       setConnected(false);
       
-      // Dados de fallback
-      setData(generateFallbackData());
-      setMetrics(calculateMetrics(generateFallbackData()));
+      // ❌ SEM FALLBACK MOCK - deixar vazio
+      setData([]);
+      setMetrics({ totalFOB: 0, totalKG: 0, avgMonthly: 0, growth: 0 });
       
     } finally {
       setLoading(false);
     }
   }, [filters]);
 
-  // ✅ DADOS DE FALLBACK COM SUPORTE MENSAL
-  const generateFallbackData = (): ComexData[] => {
-    const baseData = filters.flow === 'export' ? 
-      { baseFOB: 20000000000, baseKG: 50000000000 } :
-      { baseFOB: 15000000000, baseKG: 30000000000 };
-
-    const targetMonths = filters.viewType === 'monthly' && filters.months.length > 0 ? 
-      filters.months : 
-      Array.from({ length: 12 }, (_, i) => i + 1);
-
-    return targetMonths.map(month => {
-      const monthStr = month.toString().padStart(2, '0');
-      const seasonality = 0.8 + (Math.sin((month - 1) * Math.PI / 6) * 0.3);
-      const randomFactor = 0.85 + (Math.random() * 0.3);
-      
-      return {
-        period: `${filters.year}-${monthStr}`,
-        fob: Math.round(baseData.baseFOB * seasonality * randomFactor / 12),
-        kg: Math.round(baseData.baseKG * seasonality * randomFactor / 12)
-      };
-    });
-  };
-
   // ✅ CÁLCULO DE MÉTRICAS
-  const calculateMetrics = (data: ComexData[]): Metrics => {
-    if (data.length === 0) {
-      return { totalFOB: 0, totalKG: 0, growth: 0, recordCount: 0 };
-    }
-
+  const calculateMetrics = (data: ComexData[]) => {
     const totalFOB = data.reduce((sum, item) => sum + item.fob, 0);
     const totalKG = data.reduce((sum, item) => sum + item.kg, 0);
+    const avgMonthly = data.length > 0 ? totalFOB / data.length : 0;
     
-    const sortedData = [...data].sort((a, b) => a.period.localeCompare(b.period));
-    const firstValue = sortedData[0]?.fob || 0;
-    const lastValue = sortedData[sortedData.length - 1]?.fob || 0;
-    const growth = firstValue > 0 ? ((lastValue - firstValue) / firstValue) * 100 : 0;
+    // Calcular crescimento
+    let growth = 0;
+    if (data.length >= 2) {
+      const firstValue = data[0].fob;
+      const lastValue = data[data.length - 1].fob;
+      growth = firstValue > 0 ? ((lastValue - firstValue) / firstValue) * 100 : 0;
+    }
 
-    return { totalFOB, totalKG, growth, recordCount: data.length };
+    return { totalFOB, totalKG, avgMonthly, growth };
   };
 
-  // ✅ HANDLERS DE FILTROS
-  const handleViewTypeChange = (viewType: 'annual' | 'monthly') => {
-    setFilters(prev => ({
-      ...prev,
-      viewType,
-      months: viewType === 'annual' ? [] : prev.months
-    }));
-  };
-
-  const handleMonthToggle = (month: number) => {
-    setFilters(prev => ({
-      ...prev,
-      months: prev.months.includes(month) 
-        ? prev.months.filter(m => m !== month)
-        : [...prev.months, month].sort((a, b) => a - b)
-    }));
-  };
-
-  const selectAllMonths = () => {
-    setFilters(prev => ({
-      ...prev,
-      months: Array.from({ length: 12 }, (_, i) => i + 1)
-    }));
-  };
-
-  const clearMonths = () => {
-    setFilters(prev => ({ ...prev, months: [] }));
-  };
-
-  // ✅ EFFECTS
+  // ✅ ATUALIZAR PERÍODO QUANDO FILTROS MUDAM
   useEffect(() => {
     updatePeriodFromFilters();
   }, [updatePeriodFromFilters]);
 
+  // ✅ CARREGAR DADOS QUANDO FILTROS MUDAM
   useEffect(() => {
-    fetchData();
-  }, [fetchData]);
+    loadData();
+  }, [loadData]);
 
-  // ✅ FORMATAÇÃO DO TOOLTIP
-  const formatTooltip = (value: any, name: string) => {
-    if (name === 'fob') {
-      return [`US$ ${Number(value).toLocaleString('pt-BR')}`, 'FOB'];
-    }
-    if (name === 'kg') {
-      return [`${Number(value).toLocaleString('pt-BR')} kg`, 'Peso'];
-    }
-    return [value, name];
-  };
-
-  return (
-    <div className="space-y-6">
-      {/* Header com Filtros Expandidos */}
-      <div className="bg-white rounded-lg shadow-sm p-6">
-        <div className="flex items-center justify-between mb-6">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-900">
-              ComexStat Dashboard - {filters.flow === 'export' ? 'Exportações' : 'Importações'}
-            </h1>
-            <p className="text-gray-600">
-              Dados oficiais do comércio exterior brasileiro - {filters.viewType === 'annual' ? 'Visão Anual' : 'Visão Mensal'}
-            </p>
-          </div>
-          
-          <button
-            onClick={fetchData}
-            disabled={loading}
-            className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center"
+  // ✅ COMPONENTE DE FILTROS
+  const FilterControls = () => (
+    <div className="bg-white rounded-lg shadow-sm p-6 mb-6">
+      <h3 className="text-lg font-semibold mb-4">Filtros de Consulta</h3>
+      
+      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        {/* Fluxo */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Fluxo</label>
+          <select
+            value={filters.flow}
+            onChange={(e) => setFilters(prev => ({ ...prev, flow: e.target.value as 'export' | 'import' }))}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2"
           >
-            {loading ? (
-              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4 mr-2" />
-            )}
-            Atualizar
-          </button>
+            <option value="export">Exportação</option>
+            <option value="import">Importação</option>
+          </select>
         </div>
 
-        {/* Filtros */}
-        <div className="space-y-4">
-          {/* Linha 1: Flow e Tipo de Visualização */}
-          <div className="flex flex-wrap gap-4">
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Tipo de Operação
-              </label>
-              <select
-                value={filters.flow}
-                onChange={(e) => setFilters(prev => ({ 
-                  ...prev, 
-                  flow: e.target.value as 'export' | 'import' 
-                }))}
-                className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-              >
-                <option value="export">Exportação</option>
-                <option value="import">Importação</option>
-              </select>
-            </div>
+        {/* Tipo de visualização */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Período</label>
+          <select
+            value={filters.viewType}
+            onChange={(e) => setFilters(prev => ({ 
+              ...prev, 
+              viewType: e.target.value as 'annual' | 'monthly', 
+              months: [] 
+            }))}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2"
+          >
+            <option value="annual">Anual</option>
+            <option value="monthly">Mensal</option>
+          </select>
+        </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Visualização
-              </label>
-              <select
-                value={filters.viewType}
-                onChange={(e) => handleViewTypeChange(e.target.value as 'annual' | 'monthly')}
-                className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-              >
-                <option value="annual">Anual</option>
-                <option value="monthly">Mensal</option>
-              </select>
-            </div>
+        {/* Ano */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Ano</label>
+          <select
+            value={filters.year}
+            onChange={(e) => setFilters(prev => ({ ...prev, year: Number(e.target.value) }))}
+            className="w-full border border-gray-300 rounded-lg px-3 py-2"
+          >
+            {[2024, 2023, 2022, 2021, 2020].map(year => (
+              <option key={year} value={year}>{year}</option>
+            ))}
+          </select>
+        </div>
 
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">
-                Ano
-              </label>
-              <select
-                value={filters.year}
-                onChange={(e) => setFilters(prev => ({ 
-                  ...prev, 
-                  year: parseInt(e.target.value) 
-                }))}
-                className="border border-gray-300 rounded-lg px-3 py-2 bg-white"
-              >
-                {Array.from({ length: 10 }, (_, i) => 2024 - i).map(year => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </div>
+        {/* Status */}
+        <div>
+          <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+          <div className={`flex items-center px-3 py-2 rounded-lg ${connected ? 'bg-green-50 text-green-700' : 'bg-red-50 text-red-700'}`}>
+            {connected ? (
+              <>
+                <CheckCircle className="h-4 w-4 mr-2" />
+                Conectado
+              </>
+            ) : (
+              <>
+                <AlertTriangle className="h-4 w-4 mr-2" />
+                Desconectado
+              </>
+            )}
           </div>
-
-          {/* Linha 2: Seleção de Meses (apenas para visualização mensal) */}
-          {filters.viewType === 'monthly' && (
-            <div>
-              <div className="flex items-center justify-between mb-3">
-                <label className="block text-sm font-medium text-gray-700">
-                  Meses Selecionados ({filters.months.length === 0 ? 'Todos' : filters.months.length})
-                </label>
-                <div className="flex space-x-2">
-                  <button
-                    onClick={selectAllMonths}
-                    className="text-xs bg-blue-100 text-blue-700 px-2 py-1 rounded hover:bg-blue-200"
-                  >
-                    Todos
-                  </button>
-                  <button
-                    onClick={clearMonths}
-                    className="text-xs bg-gray-100 text-gray-700 px-2 py-1 rounded hover:bg-gray-200"
-                  >
-                    Limpar
-                  </button>
-                </div>
-              </div>
-              
-              <div className="grid grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-2">
-                {MONTHS.map(month => (
-                  <label key={month.value} className="flex items-center">
-                    <input
-                      type="checkbox"
-                      checked={filters.months.includes(month.value)}
-                      onChange={() => handleMonthToggle(month.value)}
-                      className="mr-2 rounded border-gray-300"
-                    />
-                    <span className="text-sm text-gray-700">{month.label}</span>
-                  </label>
-                ))}
-              </div>
-              
-              <p className="text-xs text-gray-500 mt-2">
-                💡 Se nenhum mês for selecionado, serão exibidos todos os meses do ano
-              </p>
-            </div>
-          )}
         </div>
       </div>
 
-      {/* Status */}
+      {/* Seleção de meses (se mensal) */}
+      {filters.viewType === 'monthly' && (
+        <div className="mt-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            Meses (deixe vazio para todos)
+          </label>
+          <div className="grid grid-cols-6 gap-2">
+            {Array.from({length: 12}, (_, i) => i + 1).map(month => (
+              <label key={month} className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={filters.months.includes(month)}
+                  onChange={(e) => {
+                    if (e.target.checked) {
+                      setFilters(prev => ({ ...prev, months: [...prev.months, month].sort() }));
+                    } else {
+                      setFilters(prev => ({ ...prev, months: prev.months.filter(m => m !== month) }));
+                    }
+                  }}
+                  className="mr-2"
+                />
+                <span className="text-sm">{month}</span>
+              </label>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="mt-4 flex justify-between items-center">
+        <button
+          onClick={loadData}
+          disabled={loading}
+          className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 disabled:opacity-50 flex items-center"
+        >
+          {loading ? (
+            <>
+              <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+              Carregando...
+            </>
+          ) : (
+            <>
+              <RefreshCw className="h-4 w-4 mr-2" />
+              Atualizar
+            </>
+          )}
+        </button>
+
+        <div className="text-sm text-gray-600">
+          Período: {filters.period.from} a {filters.period.to}
+          {data.length > 0 && (
+            <span className="ml-2 text-green-600">
+              ({data.length} períodos reais)
+            </span>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+
+  return (
+    <div className="space-y-6">
+      {/* Header */}
+      <div className="bg-white rounded-lg shadow-sm p-6">
+        <h2 className="text-2xl font-bold text-gray-900 mb-2">
+          Dashboard Comércio Exterior - {filters.flow === 'export' ? 'Exportação' : 'Importação'}
+        </h2>
+        <p className="text-gray-600">
+          Dados oficiais ComexStat MDIC - <strong>100% dados reais, zero mock data</strong>
+        </p>
+      </div>
+
+      {/* Alerta sobre política de dados */}
+      <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+        <div className="flex items-center">
+          <CheckCircle className="h-5 w-5 text-green-600 mr-3" />
+          <div>
+            <p className="text-sm font-medium text-green-800">✅ Política: Apenas Dados Reais</p>
+            <p className="text-xs text-green-700">
+              Sistema configurado para exibir exclusivamente dados oficiais da API ComexStat MDIC. 
+              Se não houver dados disponíveis, nada será exibido.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {/* Filtros */}
+      <FilterControls />
+
+      {/* Error State */}
       {error && (
-        <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-          <div className="flex items-start">
-            <AlertCircle className="h-5 w-5 text-yellow-600 mr-2 mt-0.5" />
+        <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+          <div className="flex items-center">
+            <AlertTriangle className="h-5 w-5 text-red-600 mr-3" />
             <div>
-              <p className="text-yellow-800 font-medium">Usando dados de exemplo</p>
-              <p className="text-yellow-700 text-sm mt-1">API Error: {error}</p>
+              <p className="text-red-800 font-medium">Erro ao carregar dados reais</p>
+              <p className="text-red-700 text-sm mt-1">{error}</p>
+              <p className="text-red-600 text-xs mt-2">
+                Verifique se há dados disponíveis na API ComexStat para o período selecionado.
+              </p>
             </div>
           </div>
         </div>
       )}
 
-      {/* Métricas */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            <DollarSign className="h-8 w-8 text-green-600 bg-green-100 rounded-lg p-1.5" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total FOB</p>
-              <p className="text-2xl font-bold text-gray-900">
-                US$ {(metrics.totalFOB / 1000000000).toFixed(1)}B
-              </p>
+      {/* Loading State */}
+      {loading && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-8 text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-blue-800">Carregando dados reais da API ComexStat MDIC...</p>
+          <p className="text-sm text-blue-600 mt-2">Rate limiting ativo - aguarde alguns segundos</p>
+        </div>
+      )}
+
+      {/* Empty State */}
+      {!loading && !error && data.length === 0 && (
+        <div className="bg-gray-50 border border-gray-200 rounded-lg p-8 text-center">
+          <Package className="h-12 w-12 mx-auto mb-4 text-gray-400" />
+          <h3 className="text-lg font-medium text-gray-900 mb-2">Nenhum dado encontrado</h3>
+          <p className="text-gray-600 mb-4">
+            Não há dados disponíveis na API ComexStat para o período selecionado.
+          </p>
+          <p className="text-sm text-gray-500">
+            Tente ajustar os filtros ou selecionar um período diferente.
+          </p>
+        </div>
+      )}
+
+      {/* Content - apenas se houver dados reais */}
+      {!loading && data.length > 0 && (
+        <>
+          {/* Métricas */}
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center">
+                <DollarSign className="h-8 w-8 text-green-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Total FOB</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    US$ {(metrics.totalFOB / 1000000000).toFixed(1)}B
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center">
+                <Package className="h-8 w-8 text-blue-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Total Peso</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    {(metrics.totalKG / 1000000).toFixed(1)}M kg
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center">
+                <Calendar className="h-8 w-8 text-purple-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Média Mensal</p>
+                  <p className="text-2xl font-bold text-gray-900">
+                    US$ {(metrics.avgMonthly / 1000000).toFixed(0)}M
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-lg shadow-sm p-6">
+              <div className="flex items-center">
+                <TrendingUp className="h-8 w-8 text-orange-600" />
+                <div className="ml-4">
+                  <p className="text-sm font-medium text-gray-500">Crescimento</p>
+                  <p className={`text-2xl font-bold ${metrics.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                    {metrics.growth >= 0 ? '+' : ''}{metrics.growth.toFixed(1)}%
+                  </p>
+                </div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            <Package className="h-8 w-8 text-blue-600 bg-blue-100 rounded-lg p-1.5" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Total Peso</p>
-              <p className="text-2xl font-bold text-gray-900">
-                {(metrics.totalKG / 1000000000).toFixed(1)}B kg
-              </p>
+          {/* Gráfico */}
+          <div className="bg-white rounded-lg shadow-sm p-6">
+            <h3 className="text-lg font-semibold mb-4">
+              Evolução {filters.viewType === 'monthly' ? 'Mensal' : 'Anual'} - FOB
+            </h3>
+            
+            <ResponsiveContainer width="100%" height={400}>
+              <LineChart data={data}>
+                <CartesianGrid strokeDasharray="3 3" />
+                <XAxis dataKey="period" />
+                <YAxis />
+                <Tooltip 
+                  formatter={(value: any) => [
+                    `US$ ${(value / 1000000).toFixed(1)}M`, 
+                    'FOB'
+                  ]}
+                />
+                <Line 
+                  type="monotone" 
+                  dataKey="fob" 
+                  stroke="#3B82F6" 
+                  strokeWidth={2}
+                  dot={{ fill: '#3B82F6', strokeWidth: 2 }}
+                />
+              </LineChart>
+            </ResponsiveContainer>
+
+            <div className="mt-4 text-xs text-gray-500 text-center">
+              ✅ Dados reais da API ComexStat MDIC - {data.length} períodos encontrados
             </div>
           </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            {metrics.growth >= 0 ? (
-              <TrendingUp className="h-8 w-8 text-green-600 bg-green-100 rounded-lg p-1.5" />
-            ) : (
-              <TrendingDown className="h-8 w-8 text-red-600 bg-red-100 rounded-lg p-1.5" />
-            )}
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Crescimento</p>
-              <p className={`text-2xl font-bold ${metrics.growth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                {metrics.growth > 0 ? '+' : ''}{metrics.growth.toFixed(1)}%
-              </p>
-            </div>
-          </div>
-        </div>
-
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <div className="flex items-center">
-            <Calendar className="h-8 w-8 text-purple-600 bg-purple-100 rounded-lg p-1.5" />
-            <div className="ml-4">
-              <p className="text-sm font-medium text-gray-600">Períodos</p>
-              <p className="text-2xl font-bold text-gray-900">{metrics.recordCount}</p>
-              <p className="text-xs text-gray-500">
-                {filters.viewType === 'monthly' ? 'meses' : 'registros'}
-              </p>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      {/* Gráficos */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Gráfico de Linha - FOB */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Evolução FOB - {filters.flow === 'export' ? 'Exportações' : 'Importações'}
-          </h3>
-          
-          {loading ? (
-            <div className="h-80 flex items-center justify-center">
-              <RefreshCw className="h-8 w-8 text-blue-600 animate-spin" />
-            </div>
-          ) : (
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <LineChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="period" 
-                    tick={{ fontSize: 12 }}
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                  />
-                  <YAxis tickFormatter={(value) => `${(value / 1000000000).toFixed(1)}B`} />
-                  <Tooltip formatter={formatTooltip} />
-                  <Line 
-                    type="monotone" 
-                    dataKey="fob" 
-                    stroke="#3B82F6" 
-                    strokeWidth={2}
-                    dot={{ fill: '#3B82F6', strokeWidth: 2, r: 4 }}
-                    activeDot={{ r: 6 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-
-        {/* Gráfico de Barras - Peso */}
-        <div className="bg-white rounded-lg shadow-sm p-6">
-          <h3 className="text-lg font-semibold text-gray-900 mb-4">
-            Volume por Peso (KG)
-          </h3>
-          
-          {loading ? (
-            <div className="h-80 flex items-center justify-center">
-              <RefreshCw className="h-8 w-8 text-blue-600 animate-spin" />
-            </div>
-          ) : (
-            <div className="h-80">
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={data} margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis 
-                    dataKey="period" 
-                    tick={{ fontSize: 12 }}
-                    angle={-45}
-                    textAnchor="end"
-                    height={80}
-                  />
-                  <YAxis tickFormatter={(value) => `${(value / 1000000000).toFixed(1)}B`} />
-                  <Tooltip formatter={formatTooltip} />
-                  <Bar dataKey="kg" fill="#10B981" radius={[4, 4, 0, 0]} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Footer */}
-      <div className="bg-gray-50 rounded-lg p-4 text-center text-sm text-gray-600">
-        <div className="flex items-center justify-center space-x-4">
-          {connected ? (
-            <CheckCircle className="h-4 w-4 text-green-600" />
-          ) : (
-            <AlertCircle className="h-4 w-4 text-yellow-600" />
-          )}
-          <span>
-            {connected ? 'Conectado à API ComexStat' : 'Dados de exemplo'} | 
-            {data.length} {filters.viewType === 'monthly' ? 'meses' : 'períodos'} | 
-            Última atualização: {new Date().toLocaleTimeString('pt-BR')}
-          </span>
-        </div>
-      </div>
+        </>
+      )}
     </div>
   );
 };
