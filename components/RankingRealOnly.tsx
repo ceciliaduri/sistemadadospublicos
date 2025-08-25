@@ -6,7 +6,6 @@ import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContaine
 import { Package, Building, TrendingUp, AlertTriangle, CheckCircle, RefreshCw, Info } from 'lucide-react';
 import { comexstatServiceFixed } from '../services/comexstatServiceFixed';
 import { ncmRankingService } from '../services/ncmRankingService';
-import { empresaRankingService } from '../services/empresaRankingService';
 
 interface RankingProps {
   flow: 'export' | 'import';
