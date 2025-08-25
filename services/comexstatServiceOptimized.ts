@@ -1,6 +1,4 @@
-// services/comexstatServiceOptimized.ts - Substitui comexstatServiceFixed.ts
-import { advancedRateLimiter, intelligentCache } from './advancedRateLimiter';
-
+// services/comexstatServiceOptimized.ts - VERSÃO CORRIGIDA (SUBSTITUI O ATUAL)
 const API_BASE = 'https://api-comexstat.mdic.gov.br';
 
 interface ComexstatRequest {
@@ -20,17 +18,55 @@ interface ComexstatResponse {
   language?: string;
 }
 
-class ComexStatServiceOptimized {
-  // ✅ CACHE KEY INTELIGENTE
-  private getCacheKey(payload: any): string {
-    const normalized = JSON.stringify(payload, Object.keys(payload).sort());
-    return btoa(normalized).substring(0, 32); // Base64 truncado
+// ✅ RATE LIMITING SIMPLES - SEM OVER-ENGINEERING
+let lastRequest = 0;
+const DELAY = 3000; // 3 segundos
+
+async function simpleRateLimit(): Promise<void> {
+  const now = Date.now();
+  const timeSinceLastRequest = now - lastRequest;
+  
+  if (timeSinceLastRequest < DELAY) {
+    const waitTime = DELAY - timeSinceLastRequest;
+    console.log(`⏱️ Rate limit: aguardando ${waitTime}ms`);
+    await new Promise(resolve => setTimeout(resolve, waitTime));
   }
+  
+  lastRequest = Date.now();
+}
 
-  // ✅ REQUEST DEDUPLICATION
-  private pendingRequests = new Map<string, Promise<any>>();
+// ✅ CACHE SIMPLES - SEM OVER-ENGINEERING  
+const cache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_TTL = 30 * 60 * 1000; // 30 minutos
 
-  // ✅ MÉTODO PRINCIPAL COM RATE LIMITING AVANÇADO
+function getCacheKey(payload: any): string {
+  return JSON.stringify(payload, Object.keys(payload).sort());
+}
+
+function getFromCache(key: string): any | null {
+  const cached = cache.get(key);
+  if (cached && (Date.now() - cached.timestamp) < CACHE_TTL) {
+    console.log('✅ Cache hit');
+    return cached.data;
+  }
+  if (cached) {
+    cache.delete(key);
+  }
+  return null;
+}
+
+function saveToCache(key: string, data: any): void {
+  cache.set(key, { data, timestamp: Date.now() });
+  
+  // Limpeza automática do cache (manter apenas 50 itens)
+  if (cache.size > 50) {
+    const firstKey = cache.keys().next().value;
+    cache.delete(firstKey);
+  }
+}
+
+class ComexStatServiceOptimized {
+  // ✅ MÉTODO PRINCIPAL SIMPLIFICADO
   async getGeneralData(request: ComexstatRequest): Promise<ComexstatResponse> {
     const payload = {
       flow: request.flow,
@@ -41,113 +77,71 @@ class ComexStatServiceOptimized {
       metrics: request.metrics || ['metricFOB', 'metricKG']
     };
 
-    const cacheKey = this.getCacheKey(payload);
+    const cacheKey = getCacheKey(payload);
     
     // Verificar cache primeiro
-    const cachedData = intelligentCache.get(cacheKey);
+    const cachedData = getFromCache(cacheKey);
     if (cachedData) {
-      console.log('✅ Cache hit:', cacheKey);
       return cachedData;
     }
 
-    // Verificar deduplicação
-    if (this.pendingRequests.has(cacheKey)) {
-      console.log('🔄 Request já pendente, aguardando...', cacheKey);
-      return this.pendingRequests.get(cacheKey)!;
-    }
-
-    // Criar request com rate limiting
-    const requestPromise = advancedRateLimiter.execute(
-      async () => {
-        console.log('🚀 ComexStat API Request:', JSON.stringify(payload, null, 2));
-        
-        const response = await fetch(`${API_BASE}/general?language=pt`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json',
-            'User-Agent': 'ComexStat-Dashboard/2.0',
-            'Cache-Control': 'no-cache'
-          },
-          body: JSON.stringify(payload)
-        });
-
-        if (!response.ok) {
-          const errorText = await response.text();
-          console.error(`❌ API Error ${response.status}:`, errorText);
-          
-          if (response.status === 429) {
-            throw new Error(`Rate limit excedido - request será reagendado automaticamente`);
-          }
-          
-          if (response.status === 400) {
-            throw new Error(`Parâmetros inválidos: ${errorText}`);
-          }
-          
-          if (response.status >= 500) {
-            throw new Error(`Erro do servidor: ${response.status}`);
-          }
-          
-          throw new Error(`API Error ${response.status}: ${errorText}`);
-        }
-
-        const data = await response.json();
-        console.log('✅ ComexStat API Response:', {
-          success: data.success,
-          hasData: !!data.data,
-          hasList: !!(data.data && data.data.list),
-          listLength: data.data?.list?.length || 0
-        });
-        
-        return data;
-      },
-      'high', // Prioridade alta para requests principais
-      cacheKey
-    );
-
-    // Armazenar request pendente
-    this.pendingRequests.set(cacheKey, requestPromise);
+    // Rate limiting simples
+    await simpleRateLimit();
 
     try {
-      const result = await requestPromise;
+      console.log('🚀 API Request:', JSON.stringify(payload, null, 2));
       
-      // Cache com TTL baseado no tipo de dados
-      const ttl = this.calculateTTL(request);
-      intelligentCache.set(cacheKey, result, ttl);
+      const response = await fetch(`${API_BASE}/general?language=pt`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json',
+          'User-Agent': 'ComexStat-Dashboard/1.0'
+        },
+        body: JSON.stringify(payload)
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error(`❌ API Error ${response.status}:`, errorText);
+        
+        if (response.status === 429) {
+          throw new Error(`Rate limit excedido. Aguarde alguns segundos e tente novamente.`);
+        }
+        
+        if (response.status === 400) {
+          throw new Error(`Parâmetros inválidos: ${errorText}`);
+        }
+        
+        throw new Error(`API Error ${response.status}: ${errorText}`);
+      }
+
+      const data = await response.json();
+      console.log('✅ API Response:', {
+        success: data.success,
+        hasData: !!data.data,
+        hasList: !!(data.data && data.data.list),
+        listLength: data.data?.list?.length || 0
+      });
       
-      return result;
-    } catch (error) {
-      console.error('❌ ComexStat API Error:', error);
+      // Salvar no cache
+      saveToCache(cacheKey, data);
+      
+      return data;
+
+    } catch (error: any) {
+      console.error('❌ API Error:', error);
       throw error;
-    } finally {
-      // Remover da lista de pendentes
-      this.pendingRequests.delete(cacheKey);
     }
   }
 
-  // ✅ TTL INTELIGENTE BASEADO NO TIPO DE DADOS
-  private calculateTTL(request: ComexstatRequest): number {
-    const baseYear = new Date().getFullYear();
-    const periodYear = parseInt(request.period.from.split('-')[0]);
-    
-    // Dados antigos: cache mais longo
-    if (periodYear < baseYear - 1) return 60 * 60 * 1000; // 1 hora
-    
-    // Dados do ano passado: cache médio
-    if (periodYear === baseYear - 1) return 30 * 60 * 1000; // 30 minutos
-    
-    // Dados do ano atual: cache curto
-    return 10 * 60 * 1000; // 10 minutos
-  }
-
-  // ✅ MÉTODOS ESPECIALIZADOS COM RATE LIMITING
-
+  // ✅ NCM RANKING SIMPLIFICADO
   async getNCMRanking(
     flow: 'export' | 'import',
     period: { from: string; to: string },
     limit: number = 20
   ): Promise<any[]> {
-    console.log('📊 === NCM RANKING (SEM RATE LIMIT) ===');
+    console.log('📊 Buscando NCM ranking...');
     
     try {
       const request: ComexstatRequest = {
@@ -170,18 +164,17 @@ class ComexStatServiceOptimized {
 
     } catch (error: any) {
       console.error('❌ Erro ao buscar NCM ranking:', error);
-      
-      // Não lançar erro, retornar array vazio para UX melhor
-      return [];
+      return []; // Retornar array vazio ao invés de throw para UX melhor
     }
   }
 
+  // ✅ RANKING ESTADOS SIMPLIFICADO
   async getEmpresaRanking(
     flow: 'export' | 'import',
     period: { from: string; to: string },
     limit: number = 20
   ): Promise<any[]> {
-    console.log('🏢 === EMPRESA RANKING (SEM RATE LIMIT) ===');
+    console.log('🏢 Buscando ranking por estado...');
     
     try {
       const request: ComexstatRequest = {
@@ -202,14 +195,14 @@ class ComexStatServiceOptimized {
       return [];
       
     } catch (error: any) {
-      console.error('❌ Erro ao buscar dados empresariais:', error);
+      console.error('❌ Erro ao buscar dados por estado:', error);
       return [];
     }
   }
 
-  // ✅ PROCESSAMENTO DE DADOS OTIMIZADO
+  // ✅ PROCESSAMENTO DE DADOS NCM
   private processNCMData(rawData: any[]): any[] {
-    console.log('🔄 Processando dados NCM:', rawData.length);
+    console.log(`🔄 Processando ${rawData.length} registros NCM`);
     
     const ncmMap = new Map<string, { fob: number; kg: number; qtEstat: number; descricao: string }>();
     let totalFOB = 0;
@@ -251,23 +244,28 @@ class ComexStatServiceOptimized {
       .sort((a, b) => b.fob - a.fob);
   }
 
+  // ✅ PROCESSAMENTO DE DADOS ESTADUAIS
   private processEstadualData(rawData: any[]): any[] {
+    console.log(`🔄 Processando ${rawData.length} registros estaduais`);
+    
     const estadoMap = new Map<string, { fob: number; kg: number; nome: string }>();
     let totalFOB = 0;
 
     rawData.forEach(item => {
       const fob = this.parseValue(item.metricFOB || item.vlFob);
       const kg = this.parseValue(item.metricKG || item.kgLiq);
+      
       const codigo = item.coUf || item.state || item.uf;
       const nome = item.noUf || item.estado || this.getEstadoNome(codigo);
-
+      
       if (!codigo || fob <= 0) return;
 
-      const existing = estadoMap.get(codigo) || { fob: 0, kg: 0, nome };
+      const existing = estadoMap.get(codigo) || { fob: 0, kg: 0, nome: nome || `Estado ${codigo}` };
+      
       estadoMap.set(codigo, {
         fob: existing.fob + fob,
         kg: existing.kg + kg,
-        nome
+        nome: existing.nome
       });
 
       totalFOB += fob;
@@ -275,57 +273,19 @@ class ComexStatServiceOptimized {
 
     return Array.from(estadoMap.entries())
       .map(([codigo, data]) => ({
-        identificador: codigo,
-        nome: `Estado: ${data.nome}`,
-        tipo: 'ESTADO',
+        cnpj: codigo,
+        codigo: codigo,
+        razaoSocial: `Estado: ${data.nome}`,
+        nome: data.nome,
         fob: data.fob,
         kg: data.kg,
-        participacao: totalFOB > 0 ? (data.fob / totalFOB) * 100 : 0
+        participacao: totalFOB > 0 ? (data.fob / totalFOB) * 100 : 0,
+        tipo: 'ESTADO'
       }))
       .sort((a, b) => b.fob - a.fob);
   }
 
-  // ✅ HEALTH CHECK OTIMIZADO
-  async testConnection(): Promise<{ status: boolean; message: string; data?: any }> {
-    try {
-      const testPayload = {
-        flow: 'export' as const,
-        monthDetail: false,
-        period: { from: '2023-01', to: '2023-01' }, // Período mínimo
-        metrics: ['metricFOB']
-      };
-
-      const response = await advancedRateLimiter.execute(async () => {
-        const res = await fetch(`${API_BASE}/general?language=pt`, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Accept': 'application/json'
-          },
-          body: JSON.stringify(testPayload)
-        });
-
-        if (res.ok) {
-          return res.json();
-        } else {
-          throw new Error(`HTTP ${res.status}`);
-        }
-      }, 'low');
-
-      return {
-        status: true,
-        message: `API operacional - ${response.data?.list?.length || 0} registros disponíveis`,
-        data: response.data
-      };
-    } catch (error: any) {
-      return {
-        status: false,
-        message: `Conexão falhou: ${error.message}`
-      };
-    }
-  }
-
-  // ✅ HELPERS
+  // ✅ HELPERS SIMPLES
   private parseValue(value: any): number {
     if (typeof value === 'number') return value;
     if (typeof value === 'string') {
@@ -349,22 +309,13 @@ class ComexStatServiceOptimized {
     return estados[String(codigo)] || `Estado ${codigo}`;
   }
 
-  // ✅ ESTATÍSTICAS DO SISTEMA
-  getSystemStats() {
-    return {
-      rateLimiter: advancedRateLimiter.getQueueStatus(),
-      cache: intelligentCache.getStats(),
-      pendingRequests: this.pendingRequests.size
-    };
-  }
-
-  // ✅ LIMPEZA DE EMERGÊNCIA
-  clearAll() {
-    advancedRateLimiter.clearQueue();
-    intelligentCache.clear();
-    this.pendingRequests.clear();
+  // ✅ LIMPEZA DE CACHE
+  clearCache(): void {
+    cache.clear();
+    console.log('🗑️ Cache limpo');
   }
 }
 
+// ✅ EXPORT DA INSTÂNCIA
 export const comexstatServiceOptimized = new ComexStatServiceOptimized();
 export type { ComexstatRequest, ComexstatResponse };
